@@ -1,0 +1,246 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Agente Clima V3 — Multi-Signal Score</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        body { background: #0f172a; }
+        .card { background: #1e293b; border: 1px solid #334155; }
+        .pulse-dot { animation: pulse 2s infinite; }
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.4; }
+        }
+        td.q   { min-width: 200px; word-break: break-word; white-space: normal; line-height: 1.4; }
+        td.num { white-space: nowrap; }
+        td.res { min-width: 160px; word-break: break-word; white-space: normal; line-height: 1.4; font-size: 0.75rem; color: #94a3b8; }
+        .score-badge {
+            display: inline-block; padding: 1px 6px; border-radius: 4px;
+            font-size: 0.7rem; font-weight: 700; font-family: monospace;
+        }
+        .score-high   { background: #064e3b; color: #34d399; }
+        .score-mid    { background: #713f12; color: #fbbf24; }
+        .score-low    { background: #450a0a; color: #f87171; }
+        .score-none   { background: #1e293b; color: #475569; }
+    </style>
+</head>
+<body class="text-gray-200 min-h-screen">
+
+    <!-- Header -->
+    <header class="border-b border-gray-700 px-6 py-4">
+        <div class="max-w-7xl mx-auto flex items-center justify-between">
+            <div>
+                <h1 class="text-2xl font-bold text-white">Agente Clima <span class="text-emerald-400 text-lg font-normal">V3</span></h1>
+                <p class="text-sm text-gray-400">Multi-Signal Score — Polymarket Weather Scanner</p>
+            </div>
+            <div class="flex items-center gap-3 flex-wrap">
+                <span id="bot-status-badge" class="flex items-center gap-2 px-3 py-1 rounded-full text-sm font-medium bg-red-900/50 text-red-300">
+                    <span id="status-dot" class="w-2 h-2 rounded-full bg-red-400"></span>
+                    <span id="status-text">Detenido</span>
+                </span>
+                <button id="btn-start" onclick="startBot()" class="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-sm font-medium transition">
+                    Iniciar Bot
+                </button>
+                <button id="btn-stop" onclick="stopBot()" class="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg text-sm font-medium transition hidden">
+                    Detener Bot
+                </button>
+            </div>
+        </div>
+    </header>
+
+    <main class="max-w-7xl mx-auto px-6 py-6 space-y-6">
+
+        <!-- Metrics row -->
+        <div class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-8 gap-4">
+            <div class="card rounded-xl p-4">
+                <p class="text-xs text-gray-400 uppercase tracking-wide">Capital Total</p>
+                <p id="m-capital" class="text-xl font-bold text-white mt-1">$0.00</p>
+            </div>
+            <div class="card rounded-xl p-4">
+                <p class="text-xs text-gray-400 uppercase tracking-wide">Disponible</p>
+                <p id="m-disponible" class="text-xl font-bold text-white mt-1">$0.00</p>
+            </div>
+            <div class="card rounded-xl p-4">
+                <p class="text-xs text-gray-400 uppercase tracking-wide">P&L</p>
+                <p id="m-pnl" class="text-xl font-bold mt-1">$0.00</p>
+            </div>
+            <div class="card rounded-xl p-4">
+                <p class="text-xs text-gray-400 uppercase tracking-wide">ROI</p>
+                <p id="m-roi" class="text-xl font-bold mt-1">0.00%</p>
+            </div>
+            <div class="card rounded-xl p-4">
+                <p class="text-xs text-gray-400 uppercase tracking-wide">G / P</p>
+                <p id="m-wl" class="text-xl font-bold text-white mt-1">0 / 0</p>
+            </div>
+            <div class="card rounded-xl p-4">
+                <p class="text-xs text-gray-400 uppercase tracking-wide">Score Máx</p>
+                <p id="m-top-score" class="text-xl font-bold text-emerald-400 mt-1">0</p>
+            </div>
+            <div class="card rounded-xl p-4">
+                <p class="text-xs text-gray-400 uppercase tracking-wide">Mercados Track</p>
+                <p id="m-tracked" class="text-xl font-bold text-white mt-1">0</p>
+            </div>
+            <div class="card rounded-xl p-4">
+                <p class="text-xs text-gray-400 uppercase tracking-wide">Escaneos</p>
+                <p id="m-scans" class="text-xl font-bold text-white mt-1">0</p>
+            </div>
+        </div>
+
+        <!-- Strategy info banner -->
+        <div class="card rounded-xl p-4 border-emerald-800/30">
+            <h2 class="text-sm font-semibold text-gray-300 mb-2">Estrategia V3 — Parámetros</h2>
+            <div class="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+                <div>
+                    <p class="text-xs text-gray-500 uppercase tracking-wide">Rango entrada NO</p>
+                    <p class="text-emerald-300 font-mono font-bold mt-0.5">78–93¢</p>
+                </div>
+                <div>
+                    <p class="text-xs text-gray-500 uppercase tracking-wide">Score mínimo</p>
+                    <p class="text-yellow-300 font-mono font-bold mt-0.5">60 / 100 pts</p>
+                </div>
+                <div>
+                    <p class="text-xs text-gray-500 uppercase tracking-wide">Trail stop</p>
+                    <p class="text-red-300 font-mono font-bold mt-0.5">–3¢ dinámico</p>
+                </div>
+                <div>
+                    <p class="text-xs text-gray-500 uppercase tracking-wide">Salida parcial</p>
+                    <p class="text-cyan-300 font-mono font-bold mt-0.5">50% a +7¢</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Score legend -->
+        <div class="card rounded-xl p-3 flex flex-wrap gap-4 items-center text-xs text-gray-400">
+            <span class="font-semibold text-gray-300">Score:</span>
+            <span><span class="score-badge score-high">Zona A 30</span> NO 85–91¢</span>
+            <span><span class="score-badge score-mid">Zona B 20</span> NO 80–85¢ ó 91–94¢</span>
+            <span><span class="score-badge score-low">Zona C 10</span> NO 78–80¢</span>
+            <span class="border-l border-gray-700 pl-4">Trayectoria: estable=30 · alza=20 · rápida=10</span>
+            <span class="border-l border-gray-700 pl-4">Volumen: >500=20 · >300=15 · >200=10</span>
+            <span class="border-l border-gray-700 pl-4">Hora: ≥16h=20 · ≥14h=15 · ≥12h=10</span>
+        </div>
+
+        <!-- Chart -->
+        <div class="card rounded-xl p-4">
+            <h2 class="text-sm font-semibold text-gray-300 mb-3">Capital en el Tiempo</h2>
+            <canvas id="capitalChart" height="80"></canvas>
+        </div>
+
+        <!-- Tables row -->
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+
+            <!-- Open positions -->
+            <div class="card rounded-xl p-4 overflow-x-auto">
+                <div class="flex items-center justify-between mb-3">
+                    <h2 class="text-sm font-semibold text-gray-300">Posiciones Abiertas</h2>
+                    <span id="price-badge" class="flex items-center gap-1.5 text-xs px-2 py-0.5 rounded-full bg-gray-700 text-gray-400">
+                        <span id="price-badge-dot" class="w-1.5 h-1.5 rounded-full bg-gray-500"></span>
+                        <span id="price-badge-txt">Precios: —</span>
+                    </span>
+                </div>
+                <table class="w-full text-sm">
+                    <thead>
+                        <tr class="text-left text-gray-500 border-b border-gray-700">
+                            <th class="pb-2 pr-3">Mercado</th>
+                            <th class="pb-2 pr-3 whitespace-nowrap">Score</th>
+                            <th class="pb-2 pr-3 whitespace-nowrap">Entrada</th>
+                            <th class="pb-2 pr-3 whitespace-nowrap">Actual</th>
+                            <th class="pb-2 pr-3 whitespace-nowrap">Trail</th>
+                            <th class="pb-2 pr-3 whitespace-nowrap">$</th>
+                            <th class="pb-2 whitespace-nowrap">P&L</th>
+                        </tr>
+                    </thead>
+                    <tbody id="table-open"></tbody>
+                </table>
+                <p id="no-open" class="text-gray-500 text-sm mt-2 hidden">Sin posiciones abiertas</p>
+            </div>
+
+            <!-- Opportunities -->
+            <div class="card rounded-xl p-4 overflow-x-auto">
+                <h2 class="text-sm font-semibold text-gray-300 mb-3">Oportunidades (último escaneo)</h2>
+                <table class="w-full text-sm">
+                    <thead>
+                        <tr class="text-left text-gray-500 border-b border-gray-700">
+                            <th class="pb-2 pr-3">Mercado</th>
+                            <th class="pb-2 pr-3 whitespace-nowrap">Score</th>
+                            <th class="pb-2 pr-3 whitespace-nowrap">NO</th>
+                            <th class="pb-2 pr-3 whitespace-nowrap">Zona</th>
+                            <th class="pb-2 whitespace-nowrap">Vol</th>
+                        </tr>
+                    </thead>
+                    <tbody id="table-opps"></tbody>
+                </table>
+                <p id="no-opps" class="text-gray-500 text-sm mt-2 hidden">Sin oportunidades</p>
+            </div>
+        </div>
+
+        <!-- Top Scores panel -->
+        <div class="card rounded-xl p-4 overflow-x-auto">
+            <h2 class="text-sm font-semibold text-gray-300 mb-3">Top Scores — Mercados en Seguimiento</h2>
+            <table class="w-full text-sm">
+                <thead>
+                    <tr class="text-left text-gray-500 border-b border-gray-700">
+                        <th class="pb-2 pr-3">Score</th>
+                        <th class="pb-2 pr-3 whitespace-nowrap">NO</th>
+                        <th class="pb-2 pr-3 whitespace-nowrap">Zona</th>
+                        <th class="pb-2 pr-3 whitespace-nowrap">Precio</th>
+                        <th class="pb-2 pr-3 whitespace-nowrap">Traj</th>
+                        <th class="pb-2 pr-3 whitespace-nowrap">Vol</th>
+                        <th class="pb-2 whitespace-nowrap">Hora</th>
+                    </tr>
+                </thead>
+                <tbody id="table-scores"></tbody>
+            </table>
+            <p id="no-scores" class="text-gray-500 text-sm mt-2 hidden">Sin datos de score aún</p>
+        </div>
+
+        <!-- Closed trades -->
+        <div class="card rounded-xl p-4 overflow-x-auto">
+            <h2 class="text-sm font-semibold text-gray-300 mb-3">Trades Cerrados</h2>
+            <table class="w-full text-sm">
+                <thead>
+                    <tr class="text-left text-gray-500 border-b border-gray-700">
+                        <th class="pb-2 pr-3">Mercado</th>
+                        <th class="pb-2 pr-3 whitespace-nowrap">Score</th>
+                        <th class="pb-2 pr-3 whitespace-nowrap">Entrada</th>
+                        <th class="pb-2 pr-3 whitespace-nowrap">$</th>
+                        <th class="pb-2 pr-3 whitespace-nowrap">P&L</th>
+                        <th class="pb-2 pr-3 whitespace-nowrap">Estado</th>
+                        <th class="pb-2 pr-3">Resolución</th>
+                        <th class="pb-2 whitespace-nowrap">Cierre</th>
+                    </tr>
+                </thead>
+                <tbody id="table-closed"></tbody>
+            </table>
+            <p id="no-closed" class="text-gray-500 text-sm mt-2 hidden">Sin trades cerrados</p>
+        </div>
+
+        <!-- Insights panel -->
+        <div id="insights-panel" class="card rounded-xl p-4 hidden">
+            <h2 class="text-sm font-semibold text-gray-300 mb-4">Insights de Estrategia
+                <span id="insights-trades" class="ml-2 text-gray-500 font-normal"></span>
+            </h2>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div>
+                    <p class="text-xs text-gray-500 uppercase tracking-wide mb-2">Win rate por ciudad</p>
+                    <div id="insights-city" class="space-y-1"></div>
+                </div>
+                <div>
+                    <p class="text-xs text-gray-500 uppercase tracking-wide mb-2">Win rate por hora UTC</p>
+                    <div id="insights-hour" class="space-y-1"></div>
+                </div>
+            </div>
+        </div>
+
+    </main>
+
+    <footer class="text-center text-gray-600 text-xs py-4">
+        Agente Clima V3 &mdash; Multi-Signal Score System
+    </footer>
+
+    <script src="/static/dashboard.js"></script>
+</body>
+</html>
