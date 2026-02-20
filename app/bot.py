@@ -69,8 +69,8 @@ class BotRunner:
         self._stop_event.clear()
         self._thread       = threading.Thread(target=self._run,        daemon=True)
         self._price_thread = threading.Thread(target=self._run_prices, daemon=True)
+        self._price_thread.start()  # primero: evita race condition con watchdog
         self._thread.start()
-        self._price_thread.start()
         self.status = "running"
 
     def stop(self):
