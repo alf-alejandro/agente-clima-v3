@@ -16,8 +16,10 @@ Statuses de cierre:
   LIQUIDATED — auto-liquidación por rango
 """
 
+import logging
 import threading
 from collections import defaultdict
+from datetime import datetime, timezone
 from app.scanner import now_utc, fetch_market_live, get_prices
 from app.config import (
     MAX_POSITIONS,
@@ -25,6 +27,9 @@ from app.config import (
     HALF_EXIT_GAIN,
     HARD_STOP_DROP,
 )
+import app.db as db
+
+log = logging.getLogger(__name__)
 
 
 class AutoPortfolio:
@@ -39,6 +44,7 @@ class AutoPortfolio:
         self.capital_history = [
             {"time": now_utc().isoformat(), "capital": initial_capital}
         ]
+        self._cap_record_count = 0
 
     def can_open_position(self):
         return (len(self.positions) < MAX_POSITIONS and
@@ -63,8 +69,12 @@ class AutoPortfolio:
             "status":        "OPEN",
             "pnl":           0.0,
         }
-        self.positions[opp["condition_id"]] = pos
+        cid = opp["condition_id"]
+        self.positions[cid] = pos
         self.capital_disponible -= amount
+        db.upsert_open_position(cid, pos)
+        db.save_state(self.capital_inicial, self.capital_total,
+                      self.capital_disponible, self.session_start)
         return True
 
     def get_position_slugs(self):
@@ -161,7 +171,7 @@ class AutoPortfolio:
         self.capital_disponible += cost_fraction + realized_pnl
         self.capital_total      += realized_pnl
 
-        self.closed_positions.append({
+        partial_record = {
             "question":    pos["question"],
             "city":        pos.get("city", ""),
             "condition_id": cid,
@@ -176,7 +186,12 @@ class AutoPortfolio:
             ),
             "entry_time":  pos["entry_time"],
             "close_time":  now_utc().isoformat(),
-        })
+        }
+        self.closed_positions.append(partial_record)
+        db.insert_closed_position(partial_record)
+        db.upsert_open_position(cid, pos)  # actualizar posición reducida
+        db.save_state(self.capital_inicial, self.capital_total,
+                      self.capital_disponible, self.session_start)
 
     def _close_position(self, cid, status, pnl, resolution=""):
         if cid not in self.positions:
@@ -191,8 +206,13 @@ class AutoPortfolio:
         self.capital_disponible += recovered
         self.capital_total      += pnl
 
-        self.closed_positions.append(pos.copy())
+        closed_pos = pos.copy()
+        self.closed_positions.append(closed_pos)
         del self.positions[cid]
+        db.delete_open_position(cid)
+        db.insert_closed_position(closed_pos)
+        db.save_state(self.capital_inicial, self.capital_total,
+                      self.capital_disponible, self.session_start)
 
     # ── Learning insights ─────────────────────────────────────────────────────
 
@@ -245,11 +265,47 @@ class AutoPortfolio:
 
     # ── Capital snapshot ──────────────────────────────────────────────────────
 
+    # ── State persistence ─────────────────────────────────────────────────────
+
+    def save_state(self):
+        db.save_state(self.capital_inicial, self.capital_total,
+                      self.capital_disponible, self.session_start)
+
+    def load_state(self):
+        """Restaura estado desde DB al arrancar. Devuelve True si OK."""
+        s = db.load_state()
+        if not s:
+            return False
+        try:
+            self.capital_inicial    = s["capital_inicial"]
+            self.capital_total      = s["capital_total"]
+            self.capital_disponible = s["capital_disponible"]
+            self.positions          = db.load_open_positions()
+            self.closed_positions   = db.load_closed_positions()
+            hist = db.load_capital_history()
+            if hist:
+                self.capital_history = hist
+            self.session_start = datetime.fromisoformat(s["session_start"])
+            log.info(
+                "Estado restaurado desde DB: capital=%.2f  abiertas=%d  cerradas=%d",
+                self.capital_total, len(self.positions), len(self.closed_positions),
+            )
+            return True
+        except Exception as e:
+            log.warning("load_state error: %s", e)
+            return False
+
+    # ── Capital snapshot ──────────────────────────────────────────────────────
+
     def record_capital(self):
-        self.capital_history.append({
-            "time":    now_utc().isoformat(),
-            "capital": round(self.capital_total, 2),
-        })
+        ts = now_utc().isoformat()
+        point = {"time": ts, "capital": round(self.capital_total, 2)}
+        self.capital_history.append(point)
+        if len(self.capital_history) > 500:
+            self.capital_history = self.capital_history[-500:]
+        self._cap_record_count += 1
+        if self._cap_record_count % 120 == 0:  # cada ~1h (120 ciclos × 30s)
+            db.append_capital_point(ts, round(self.capital_total, 2))
 
     def snapshot(self):
         pnl = self.capital_total - self.capital_inicial
